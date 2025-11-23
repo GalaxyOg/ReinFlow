@@ -1,13 +1,13 @@
 ######################################################################
 env_suite: gym
-env: hopper-medium-v2
+env: FFSM-6dof-v0
 
 # future action forecasts
-action_dim: 3
+action_dim: 48
 horizon_steps: 4
 
 # observation history
-obs_dim: 11
+obs_dim: 111
 cond_steps: 1
 ###################################################################
 defaults:
@@ -18,17 +18,17 @@ hydra:
 _target_: agent.pretrain.train_diffusion_agent.TrainDiffusionAgent
 name: ${env}_pre_diffusion_mlp_ta${horizon_steps}_td${denoising_steps}_seed${seed}
 logdir: ${oc.env:REINFLOW_LOG_DIR}/gym/pretrain/${name}/${now:%Y-%m-%d}_${now:%H-%M-%S}_${seed}
-train_dataset_path: ${oc.env:REINFLOW_DATA_DIR}/gym/${env}/train.npz
+train_dataset_path: /home/yh/Algo_test/FM2RL/expert_data/rlzoo3_trajs.npz
 normalization_path: /home/yh/Algo_test/expert_data/normalization.npz
-use_d4rl_dataset: True
+use_d4rl_dataset: False
 test_in_mujoco: True
 seed: 42
-device: cuda:0
+device: cuda:1
 sim_device: cuda:0
 denoising_steps: 20
 batch_size: 128
 train:
-  n_epochs: 120            #3000, 200
+  n_epochs: 20           #3000, 200
   batch_size: ${batch_size}
   learning_rate: 1e-3
   weight_decay: 1e-6
@@ -36,12 +36,13 @@ train:
     first_cycle_steps: 3000 # 200
     warmup_steps: 1
     min_lr: 1e-4
-  save_model_freq: 100
+  save_model_freq: 200
   test_freq: 100
-wandb:
+wandb: 
   entity: ${oc.env:REINFLOW_WANDB_ENTITY}
   project: gym-${env}-pretrain
   run: ${now:%H-%M-%S}_${name}
+  offline_mode: True
 model:
   _target_: model.diffusion.diffusion.DiffusionModel
   predict_epsilon: True
@@ -71,3 +72,7 @@ train_dataset:
   cond_steps: ${cond_steps}
   device: ${device}
   max_n_episodes: -1
+
+
+
+
