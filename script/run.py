@@ -137,6 +137,7 @@ def main(cfg: OmegaConf):
     cls = hydra.utils.get_class(cfg._target_)
     agent = cls(cfg)
     agent.run()
+    # agent.eval()
 
 
 if __name__ == "__main__":

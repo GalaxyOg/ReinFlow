@@ -30,7 +30,7 @@ This file normalizes a raw .npz dataset file and outputs a normalization.npz and
 
 import numpy as np
 
-file_path = None
+file_path = "/home/yh/Algo_test/expert_data/sac_42/trajs.npz"
 
 '''
 Arrays in the ant train.npz file:
