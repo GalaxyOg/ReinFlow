@@ -34,7 +34,7 @@ err/
 *.pt
 *.pth
 # *.csv
-# visualize/
+visualize/
 # visualize/0_Models/
 # visualize/data/
 # final_experiments_record/

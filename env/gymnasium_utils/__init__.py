@@ -116,7 +116,7 @@ def make_async(
                 obs_modality_dict.pop("rgb")
             ObsUtils.initialize_obs_modality_mapping_from_dict(obs_modality_dict)
             if render_offscreen or use_image_obs:
-                os.environ[""] = "egl"
+                os.environ["MUJOCO_GL"] = "egl"
             with open(robomimic_env_cfg_path, "r") as f:
                 env_meta = json.load(f)
             env_meta["reward_shaping"] = reward_shaping
@@ -133,6 +133,17 @@ def make_async(
         else:
             # Only pass render parameter to environments that support it
             # Most gymnasium environments like CartPole don't accept render parameter
+            if render_offscreen:
+                kwargs["render_mode"] = "rgb_array"
+                # Let Mujoco/Gymnasium decide the best backend (glfw/egl/osmesa)
+                os.environ["MUJOCO_GL"] = "egl"
+                os.environ["MESA_GL_VERSION_OVERRIDE"] = "3.3"
+                os.environ["MESA_GLSL_VERSION_OVERRIDE"] = "330"
+                os.environ["LIBGL_ALWAYS_SOFTWARE"] = "1"
+                os.environ["LIBGL_DRIVERS_PATH"] = "/usr/lib/x86_64-linux-gnu/dri"
+            elif render:
+                kwargs["render_mode"] = "human"
+
             if render and "kitchen" in env_name:
                 kwargs["render"] = render
             if "Humanoid" in env_name:
@@ -152,11 +163,19 @@ def make_async(
         # import d4rl
         import gymnasium as gym
         import numpy as np
+        import sys
+        import os
         from env.gymnasium_utils.wrapper.multi_step import MultiStep
-
+        
+        # Ensure obs_dim is valid
+        current_obs_dim = obs_dim
+        if not current_obs_dim:
+            current_obs_dim = 48  # Default for FFSMEnv6dof-v0
+            
         env = gym.Env()
-        observation_space = spaces.Dict()
+
         if shape_meta is not None:
+            observation_space = spaces.Dict()
             for key, value in shape_meta["obs"].items():
                 shape = value["shape"]
                 if key.endswith("rgb"):
@@ -172,12 +191,14 @@ def make_async(
                     dtype=np.float32,
                 )
         else:
-            observation_space["state"] = gym.spaces.Box(
-                -1,
-                1,
-                shape=(obs_dim,),
-                dtype=np.float32,
-            )
+            observation_space = spaces.Dict({
+                "state": spaces.Box(
+                    -1,
+                    1,
+                    shape=(current_obs_dim,),
+                    dtype=np.float32,
+                )
+            })
         env.observation_space = observation_space
         env.action_space = gym.spaces.Box(-1, 1, shape=(action_dim,), dtype=np.float32)
         env.metadata = {
@@ -193,16 +214,31 @@ def make_async(
                     n_obs_steps = int(multi_cfg.get("n_obs_steps", n_obs_steps))
                 except Exception:
                     n_obs_steps = obs_steps
-
-        return MultiStep(env=env, n_obs_steps=n_obs_steps)
+        
+        if n_obs_steps < 1:
+            n_obs_steps = 1
+            
+        env = MultiStep(env=env, n_obs_steps=n_obs_steps)
+        # print(f"DEBUG: dummy_env observation_space: {env.observation_space}", file=sys.stderr)
+        return env
 
     env_fns = [_make_env for _ in range(num_envs)]
+    
+    # Define exports
+    __all__ = [
+        "AsyncVectorEnv",
+        "SyncVectorEnv", 
+        "VectorEnv",
+        "VectorEnvWrapper",
+        "make_async",
+    ]
     
     if asynchronous:
         return AsyncVectorEnv(
             env_fns,
             dummy_env_fn=(dummy_env_fn if render or render_offscreen or use_image_obs else None),
             delay_init="avoiding" in env_name,
+            shared_memory=False,
         )
     else:
         # Create a temporary environment to get observation_space and action_space

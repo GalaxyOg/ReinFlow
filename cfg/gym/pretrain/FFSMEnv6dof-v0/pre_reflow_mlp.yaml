@@ -1,9 +1,9 @@
 ######################################################################
 env_suite: gym
-env: FFSM-6dof-v0
+env: FFSMEnv6dof-v0
 
 # future action forecasts
-action_dim: 7
+action_dim: 21
 horizon_steps: 4
 
 # observation history
@@ -18,18 +18,18 @@ hydra:
 _target_: agent.pretrain.train_reflow_agent.TrainReFlowAgent
 name: ${env}_pre_reflow_mlp_ta${horizon_steps}_td${denoising_steps}_seed${seed}
 logdir: ${oc.env:REINFLOW_LOG_DIR}/gym/pretrain/${name}/${now:%Y-%m-%d}_${now:%H-%M-%S}_${seed}
-train_dataset_path: /home/yh/Algo_test/expert_data/sac_42/train.npz
-normalization_path: /home/yh/Algo_test/expert_data/sac_42/normalization.npz
+train_dataset_path: ${oc.env:REINFLOW_DATA_DIR}/gym/${env}/train.npz
+normalization_path: ${oc.env:REINFLOW_DATA_DIR}/gym/${env}/normalization.npz
 use_d4rl_dataset: False
 test_in_mujoco: True
-base_policy_path: /home/yh/Algo_test/ReinFlow/logs/gym/pretrain/FFSM-6dof-v0_pre_reflow_mlp_ta4_td40_seed42/2025-11-29_11-58-07_42/checkpoint/best.pt
+# base_policy_path: /home/yh/Algo_test/ReinFlow/logs/gym/pretrain/FFSM-6dof-v0_pre_reflow_mlp_ta4_td40_seed42/2025-11-29_11-58-07_42/checkpoint/best.pt
 seed: 42
 device: cuda:1
 sim_device: cuda:2
 denoising_steps: 40
 batch_size: 128
 train:
-  n_epochs: 3000            #3000, 200
+  n_epochs: 100            #3000, 200
   batch_size: ${batch_size}
   learning_rate: 1e-3
   weight_decay: 1e-6

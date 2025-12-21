@@ -34,7 +34,8 @@ import logging
 import random
 from tqdm import tqdm as tqdm
 log = logging.getLogger(__name__)
-from env.gym_utils import make_async
+# from env.gym_utils import make_async
+from env.gymnasium_utils import make_async
 from omegaconf import OmegaConf
 import torch.nn as nn
 import os
@@ -56,7 +57,7 @@ class EvalAgent:
         torch.manual_seed(self.seed)
         
         ############ could be overload #############
-        self.record_video = False
+        self.record_video = True
         self.frame_width = 640  # Default, can be overridden
         self.frame_height = 480
         self.all_video_paths=[] # a list of video paths for each denoising step.

@@ -214,7 +214,7 @@ class PreTrainAgent:
             if cfg.env_suite=='gym':
                 env_max_episode_steps=1_000
                 rollout_n_steps=5_00
-                n_eval_envs=40
+                n_eval_envs=4
                 best_reward_threshold_for_success=3.0
                 robomimic_env_cfg_path=None
                 shape_meta=None
@@ -246,13 +246,13 @@ class PreTrainAgent:
                 name=cfg.env,
                 max_episode_steps=env_max_episode_steps,
                 reset_at_iteration=False,
-                save_video=False,                               # Change to True if needed
+                save_video=True,                               # Change to True if needed
                 use_image_obs = use_image_obs,
                 best_reward_threshold_for_success=best_reward_threshold_for_success,
                 wrappers=wrappers,
                 n_steps=rollout_n_steps,
-                render=False,
-                render_num=0,
+                render=True,
+                render_num=2,
                 robomimic_env_cfg_path=robomimic_env_cfg_path,
                 shape_meta=shape_meta
             )

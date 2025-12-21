@@ -36,8 +36,9 @@ class EvalReFlowAgent(EvalAgent):
         ################################################      overload        #########################################################
         self.load_ema = cfg.get('load_ema', False) #Turn to True when evaluating pretrained models.
         self.clip_intermediate_actions=True
-        self.record_video =False
-        self.record_env_index=0
+        # Dynamically set record_video based on configuration
+        self.record_video = cfg.get('env', {}).get('save_video', False) and cfg.get('render_num', 0) > 0
+        self.record_env_index=1
         self.frame_width = 640  # Default, can be overridden
         self.frame_height = 480
         self.render_onscreen =False #not self.record_video #False
@@ -45,7 +46,7 @@ class EvalReFlowAgent(EvalAgent):
         self.denoising_steps_trained = None # actually this is meaning less for reflow. it could be infinity. 
         self.model.show_inference_process = False # whether to print each integration step during sampling. 
         self.plot_scale='standard'
-        log.info(f"Evaluation: load_ema={self.load_ema}, clip_intermediate_actions={self.clip_intermediate_actions}")
+        log.info(f"Evaluation: load_ema={self.load_ema}, clip_intermediate_actions={self.clip_intermediate_actions}, record_video={self.record_video}")
         ####################################################################################
     def infer(self, cond:dict, num_denoising_steps:int):
         ################################################      overload        #########################################################

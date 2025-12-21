@@ -1,11 +1,13 @@
 import numpy as np
 import gymnasium as gym
 from gymnasium import spaces
+import imageio
 
 
 class MujocoLocomotionLowdimWrapper(gym.Env):
     def __init__(self, env, normalization_path):
         self.env = env
+        self.video_writer = None
 
         self.action_space = env.action_space
         normalization = np.load(normalization_path)
@@ -34,6 +36,13 @@ class MujocoLocomotionLowdimWrapper(gym.Env):
 
     def reset(self, *, seed=None, return_info: bool = False, options: dict = None):
         options = options or {}
+        if self.video_writer is not None:
+            self.video_writer.close()
+            self.video_writer = None
+
+        if "video_path" in options:
+            self.video_writer = imageio.get_writer(options["video_path"], fps=30)
+
         new_seed = options.get("seed", None)
         if new_seed is not None:
             self.seed(seed=new_seed)
@@ -61,7 +70,12 @@ class MujocoLocomotionLowdimWrapper(gym.Env):
             terminated = bool(done)
             truncated = False
         obs = self.normalize_obs(raw_obs)
+
+        if self.video_writer is not None:
+            video_img = self.env.render()
+            self.video_writer.append_data(video_img)
+
         return {"state": obs}, reward, terminated, truncated, info
 
-    def render(self, **kwargs):
-        return self.env.render(**kwargs)
+    def render(self):
+        return self.env.render()

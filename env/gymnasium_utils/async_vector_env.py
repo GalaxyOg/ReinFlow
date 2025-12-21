@@ -212,12 +212,26 @@ class AsyncVectorEnv(VectorEnv):
         self._state = AsyncState.DEFAULT
 
         if return_info:
-            results, infos = zip(*results)
-            infos = list(infos)
+            # Handle environments that always return (observation, info) tuples
+            # Extract observations and infos correctly
+            extracted_results = []
+            infos_list = []
+            for result in results:
+                if isinstance(result, tuple) and len(result) == 2:
+                    # Standard gymnasium environment returning (observation, info)
+                    observation, info = result
+                else:
+                    # Environment only returning observation, create empty info
+                    observation = result
+                    info = {}
+                extracted_results.append(observation)
+                infos_list.append(info)
+            
+            infos = list(infos_list)
 
             if not self.shared_memory:
                 self.observations = concatenate(
-                    self.single_observation_space, results, self.observations
+                    self.single_observation_space, extracted_results, self.observations
                 )
 
             return (
@@ -225,9 +239,20 @@ class AsyncVectorEnv(VectorEnv):
                 infos,
             )
         else:
+            # Extract only observations, ignoring info
+            extracted_results = []
+            for result in results:
+                if isinstance(result, tuple) and len(result) == 2:
+                    # Standard gymnasium environment returning (observation, info)
+                    observation, _ = result
+                else:
+                    # Environment only returning observation
+                    observation = result
+                extracted_results.append(observation)
+
             if not self.shared_memory:
                 self.observations = concatenate(
-                    self.single_observation_space, results, self.observations
+                    self.single_observation_space, extracted_results, self.observations
                 )
 
             return deepcopy(self.observations) if self.copy else self.observations
@@ -268,7 +293,7 @@ class AsyncVectorEnv(VectorEnv):
             self.observations = concatenate(
                 self.single_observation_space,
                 observations_list,
-                self.observations,
+                self.observations
             )
 
         return (
@@ -453,11 +478,25 @@ def _worker(index, env_fn, pipe, parent_pipe, shared_memory, error_queue):
             command, data = pipe.recv()
             if command == "reset":
                 if "return_info" in data and data["return_info"] == True:
-                    observation, info = env.reset(**data)
+                    result = env.reset(**data)
+                    # Handle environments that always return (observation, info) tuples
+                    if isinstance(result, tuple) and len(result) == 2:
+                        observation, info = result
+                    else:
+                        # Environment only returned observation
+                        observation = result
+                        info = {}
                     pipe.send(((observation, info), True))
                 else:
-                    observation = env.reset(**data)
-                    pipe.send((observation, True))
+                    result = env.reset(**data)
+                    # Handle environments that always return (observation, info) tuples
+                    if isinstance(result, tuple) and len(result) == 2:
+                        observation, info = result
+                        # For non-return_info case, only send observation
+                        pipe.send((observation, True))
+                    else:
+                        # Environment only returned observation
+                        pipe.send((result, True))
 
             elif command == "step":
                 observation, reward, terminated, truncated, info = env.step(data)
@@ -505,13 +544,26 @@ def _worker_shared_memory(index, env_fn, pipe, parent_pipe, shared_memory, error
             command, data = pipe.recv()
             if command == "reset":
                 if "return_info" in data and data["return_info"] == True:
-                    observation, info = env.reset(**data)
+                    result = env.reset(**data)
+                    # Handle environments that always return (observation, info) tuples
+                    if isinstance(result, tuple) and len(result) == 2:
+                        observation, info = result
+                    else:
+                        # Environment only returned observation
+                        observation = result
+                        info = {}
                     write_to_shared_memory(observation_space, index, observation, shared_memory)
-                    pipe.send(((None, info), True))
+                    pipe.send(((observation, info), True))
                 else:
-                    observation = env.reset(**data)
+                    result = env.reset(**data)
+                    # Handle environments that always return (observation, info) tuples
+                    if isinstance(result, tuple) and len(result) == 2:
+                        observation, info = result
+                    else:
+                        # Environment only returned observation
+                        observation = result
                     write_to_shared_memory(observation_space, index, observation, shared_memory)
-                    pipe.send((None, True))
+                    pipe.send((observation, True))
             elif command == "step":
                 observation, reward, terminated, truncated, info = env.step(data)
                 write_to_shared_memory(observation_space, index, observation, shared_memory)
