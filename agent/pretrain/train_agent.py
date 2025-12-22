@@ -344,75 +344,98 @@ class PreTrainAgent:
         timer = Timer()
         cnt_batch = 0
         log.info(f"self.epoch={self.epoch}, begin training.")
+        # 外层循环：遍历所有训练周期(epoch)
         for epoch in tqdm(range(self.first_epoch, self.first_epoch + self.n_epochs)):
+            # 设置模型为训练模式
             self.model.train()
             # train
+            # 初始化用于存储本轮次训练损失的列表
             loss_train_epoch = []
+            # 计算每个epoch中的训练步数（批次数）
             steps_per_epoch = len(self.dataloader_train)
+            # 内层循环：遍历当前epoch中的所有训练批次
+            # step: 当前批次的索引 (0, 1, 2, ...)
+            # batch_train: 当前批次的数据 (包含训练所需的观测值、动作等)
             for step, batch_train in tqdm(enumerate(self.dataloader_train), desc=f'total steps={steps_per_epoch}') \
                 if self.verbose_train else enumerate(self.dataloader_train):
+                # 如果数据在CPU上，将其转移到指定设备
                 if self.dataset_train.device == "cpu":
                     batch_train = batch_to_device(batch_train)
                 
+                # 清零优化器的梯度
                 self.optimizer.zero_grad()
                 
+                # 计算当前批次的训练损失（前向传播）
                 loss_train = self.get_loss(batch_train)
                 
+                # 反向传播计算梯度
                 loss_train.backward()
+                # 将当前批次的损失值添加到列表中
                 loss_train_epoch.append(loss_train.item())
+                # 如果启用详细损失输出，则打印当前训练进度
                 if self.verbose_loss: 
                     print(f"epoch: {epoch}/{self.first_epoch + self.n_epochs}={epoch/(self.n_epochs-self.first_epoch)*100:2.2f}%, steps: {step}, loss: {loss_train.item():3.4}", end="\r")
 
+                # 执行优化器步骤，更新模型参数
                 self.optimizer.step()
+                # 如果设置了每个梯度步骤都调整学习率，则更新学习率
                 if self.schedule_lr_each_grad_step:
                     self.lr_scheduler.step()
                 
                 # update ema
+                # 更新指数移动平均模型（EMA）
                 if cnt_batch % self.update_ema_freq == 0:
                     self.step_ema()
-                # TensorBoard step-level logging
-                if getattr(self, 'writer', None) is not None:
-                    try:
-                        lr_val = self.lr_scheduler.get_last_lr()[0]
-                    except Exception:
-                        lr_val = self.optimizer.param_groups[0]["lr"]
-                    self.writer.add_scalar('train/loss_step', float(loss_train), cnt_batch)
-                    self.writer.add_scalar('train/lr', float(lr_val), cnt_batch)
+                # 更新全局批次计数器
                 cnt_batch += 1
+            # 计算本轮次的平均训练损失
             loss_train = np.mean(loss_train_epoch)
 
             # validate
+            # 验证阶段（如果有验证数据集且到达验证频率）
             with torch.no_grad():
                 loss_val_epoch = []
                 # for RL, self.dataloader_val is None. So you just skip this part. 
+                # 检查是否有验证数据集且是否到达验证周期
                 if self.dataloader_val is not None and self.epoch % self.val_freq == 0:
+                    # 设置模型为评估模式
                     self.model.eval()
+                    # 遍历验证数据集
                     for batch_val in self.dataloader_val:
                         if self.dataset_val.device == "cpu":
                             batch_val = batch_to_device(batch_val)
                         with torch.no_grad:
+                            # 计算验证损失
                             loss_val = self.get_loss(batch_val)
                             loss_val_epoch.append(loss_val.item())
+                    # 重新设置模型为训练模式
                     self.model.train()
+                # 计算平均验证损失
                 loss_val = np.mean(loss_val_epoch) if len(loss_val_epoch) > 0 else None
 
             # update lr
+            # 更新学习率（如果不是每个梯度步骤更新）
             if not self.schedule_lr_each_grad_step:
                 self.lr_scheduler.step()
             
             # always save the last checkpoint for resume 
+            # 保存最新的检查点（用于恢复训练）
             self.save_last_model()
             
             # save model # default is 100 by pre_diffusion_mlp.yaml
+            # 定期保存模型检查点
             if self.epoch % self.save_model_freq == 0 or self.epoch == self.n_epochs:
                 self.save_model()
                         
             # test in mujoco simulator
+            # 在MuJoCo模拟器中测试模型性能
             if self.test_in_mujoco and self.epoch % self.test_freq == 0:
                 self.test()
             
             # log testing info
+            # 记录训练日志信息
             self.log(epoch, loss_train, loss_val, timer)
+            # 增加epoch计数器
             self.epoch += 1
     
 
@@ -549,6 +572,10 @@ class PreTrainAgent:
             # TensorBoard logging (mirror of wandb but safe if writer is None)
             try:
                 if getattr(self, 'writer', None) is not None:
+                    # 添加每步的损失和学习率记录
+                    # 注意：这里我们需要访问训练循环中的cnt_batch变量，但在这个函数作用域中不可用
+                    # 因此我们只记录每个epoch级别的信息
+                    
                     if loss_val is not None:
                         self.writer.add_scalar('loss/val', float(loss_val), self.epoch)
                     # train loss and lr
