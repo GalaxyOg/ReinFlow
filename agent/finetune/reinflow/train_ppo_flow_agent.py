@@ -198,6 +198,8 @@ class TrainPPOFlowAgent(TrainPPOAgent):
             self.adjust_finetune_schedule()# update finetune scheduler of ReFlow Policy
             self.save_model()
             self.itr += 1 
+        # Close TensorBoard writer at the end of training
+        self.close_writer()
             
     def adjust_finetune_schedule(self):
         # constant noise levels in intermediate steps, but the level changes over the course of training
@@ -328,21 +330,33 @@ class TrainPPOFlowAgent(TrainPPOAgent):
         log.info(f"""adaptive kl {tune} lr: actor_lr={self.actor_optimizer.param_groups[0]["lr"]:.2e}, critic_lr={self.critic_optimizer.param_groups[0]["lr"]:.2e}""")
     
     def minibatch_generator(self):
+        # 初始化近似KL散度为0
         self.approx_kl = 0.0
         
+        # 从缓冲区获取完整的数据集：观测、链、回报、旧价值、优势和旧对数概率
         obs, chains, returns, oldvalues, advantages, oldlogprobs =  self.buffer.make_dataset()
         # Explained variation of future rewards using value function
+        # 计算价值函数解释未来奖励变化的程度
         self.explained_var = self.buffer.get_explained_var(oldvalues, returns)
         
+        # 计算总步数（步数*环境数）
         self.total_steps = self.n_steps * self.n_envs
+        # 对每个更新周期进行迭代
         for update_epoch in range(self.update_epochs):
+            # 重置KL变化标志
             self.kl_change_too_much = False
+            # 在设备上生成随机索引，用于打乱数据
             indices = torch.randperm(self.total_steps, device=self.device)
+            # 如果学习率调度是固定的且KL变化过大，则跳出循环
             if self.lr_schedule=='fixed' and self.kl_change_too_much:
                 break
+            # 按批次大小分割数据，生成小批次
             for batch_id, start in enumerate(range(0, self.total_steps, self.batch_size)):
+                # 计算批次结束位置
                 end = start + self.batch_size
+                # 获取当前批次的随机索引
                 inds_b = indices[start:end]
+                # 构建小批次数据：包含状态观测、链、回报、旧价值、优势和旧对数概率
                 minibatch = (
                     {"state": obs[inds_b]},
                     chains[inds_b],
@@ -351,11 +365,15 @@ class TrainPPOFlowAgent(TrainPPOAgent):
                     advantages[inds_b],
                     oldlogprobs[inds_b] 
                 )
-                if self.lr_schedule=='fixed' and self.target_kl and self.approx_kl > self.target_kl: # we can also use adaptive KL instead of early stopping.
+                # 如果学习率调度固定且目标KL存在且近似KL大于目标KL，则停止优化
+                # we can also use adaptive KL instead of early stopping.
+                # 我们也可以使用自适应KL而不是提前停止。
+                if self.lr_schedule=='fixed' and self.target_kl and self.approx_kl > self.target_kl:
                     self.kl_change_too_much = True
                     log.warning(f"KL change too much, approx_kl ={self.approx_kl} > {self.target_kl} = target_kl, stop optimization.")
                     break
                 
+                # 生成更新周期、批次ID和小批次数据
                 yield update_epoch, batch_id, minibatch    
 
     def minibatch_generator_repeat(self):

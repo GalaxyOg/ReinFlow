@@ -104,34 +104,44 @@ class PPOBuffer:
         obs_venv: dict containing numpy.ndarray
         '''
         # bootstrap value with GAE if not terminal - apply reward scaling with constant if specified
+        # 如果非终端状态，使用GAE进行引导值计算 - 如果指定则应用奖励缩放常数
         obs_venv_ts = {
             "state": torch.from_numpy(obs_venv["state"])
             .float()
             .to(self.device)
         }
         
+        # 初始化优势轨迹数组，根据设备类型选择numpy或torch张量
         self.advantages_trajs = np.zeros((self.n_steps, self.n_envs)) if buffer_device == 'cpu' else torch.zeros(self.n_steps, self.n_envs, device=self.device)
         
+        # 从后向前计算GAE（广义优势估计）
         lastgaelam = 0
         for t in reversed(range(self.n_steps)):
             # get V(s_t+1)
+            # 获取V(s_t+1) - 状态t+1的价值
             if t == self.n_steps - 1:
+                # 如果是最后一步，使用critic网络预测下一个状态的价值
                 nextvalues = critic.forward(obs_venv_ts).reshape(1, -1)
                 nextvalues = nextvalues.cpu().numpy() if buffer_device == 'cpu' else nextvalues.to(self.device)
             else:
+                # 否则使用已有的价值轨迹中的下一个时间步的价值
                 nextvalues = self.value_trajs[t + 1]
             # delta = r + gamma*V(st+1) - V(st)
-            non_terminal = 1.0 - self.terminated_trajs[t]
+            # 计算TD误差: delta = r + gamma*V(s_t+1) - V(s_t)
+            non_terminal = 1.0 - self.terminated_trajs[t]  # 非终端掩码，如果环境终止则为0
             delta = (
-                self.reward_trajs[t] * self.reward_scale_const
-                + self.gamma * nextvalues * non_terminal
-                - self.value_trajs[t]
+                self.reward_trajs[t] * self.reward_scale_const  # 缩放后的奖励
+                + self.gamma * nextvalues * non_terminal        # 折扣后的未来价值
+                - self.value_trajs[t]                           # 当前状态价值
             )
             # A = delta_t + gamma*lamdba*delta_{t+1} + ...
+            # 计算GAE优势: A = delta_t + gamma*lambda*delta_{t+1} + ...
+            # 这是广义优势估计的递归公式
             self.advantages_trajs[t] = lastgaelam = (
                 delta
                 + self.gamma * self.gae_lambda * non_terminal * lastgaelam
             )
+        # 计算回报：回报 = 优势 + 价值
         self.returns_trajs = self.advantages_trajs + self.value_trajs
     
     def make_dataset(self):

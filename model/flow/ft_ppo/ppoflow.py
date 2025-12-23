@@ -186,10 +186,17 @@ class PPOFlow(nn.Module):
             xt: torch.Tensor of shape `[batchsize, self.horizon_steps, self.action_dim]`
             log_prob: torch.Tensor of shape `[batchsize]`
         '''
+        # 创建标准正态分布（均值为0，标准差为1）
+        # 分布形状：[batchsize, 时间步数*动作维度]
         dist = Normal(torch.zeros(B, self.horizon_steps* self.action_dim), 1.0)
+        # 从正态分布中采样初始轨迹点
         xt= dist.sample()
+        # 计算采样点的对数概率，并沿最后一维求和（得到每条轨迹的总对数概率）
+        # 然后将结果移到指定设备上
         log_prob = dist.log_prob(xt).sum(-1).to(self.device)                    # mean() or sum() 
+        # 将采样点重塑为[batchsize, 时间步数, 动作维度]的形状，并移到指定设备上
         xt=xt.reshape(B, self.horizon_steps, self.action_dim).to(self.device)
+        # 返回初始轨迹点和对应的对数概率
         return xt, log_prob
     
     def get_logprobs(self, 

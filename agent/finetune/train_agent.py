@@ -34,8 +34,8 @@ import wandb
 import random
 
 log = logging.getLogger(__name__)
-from env.gym_utils import make_async
-
+# from env.gym_utils import make_async
+from env.gymnasium_utils import make_async
 
 class TrainAgent:
 

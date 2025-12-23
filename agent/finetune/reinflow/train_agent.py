@@ -33,8 +33,10 @@ import torch
 import hydra
 import logging
 import wandb
+from torch.utils.tensorboard import SummaryWriter
 log = logging.getLogger(__name__)
-from env.gym_utils import make_async
+# from env.gym_utils import make_async
+from env.gymnasium_utils import make_async
 from util.reproducibility import set_seed_everywhere
 class TrainAgent:        
     def __init__(self, cfg):
@@ -73,6 +75,20 @@ class TrainAgent:
         # Make vectorized env
         self.env_name = cfg.env.name
         env_type = cfg.env.get("env_type", None)
+        
+        # Fix for EGL initialization error in headless xvfb environment
+        # We force GLFW which works with xvfb, instead of EGL which fails
+        # NOTE: This is now also handled in env.gymnasium_utils.make_async for worker processes
+        if "MUJOCO_GL" not in os.environ and os.environ.get("DISPLAY"):
+            os.environ["MUJOCO_GL"] = "glfw"
+            log.info("Forced MUJOCO_GL='glfw' for headless rendering with xvfb")
+
+        # Prepare kwargs for make_async
+        env_kwargs = cfg.env.specific if "specific" in cfg.env else {}
+        save_video = cfg.env.get("save_video", False)
+        if save_video:
+            env_kwargs["render_mode"] = "rgb_array"
+
         self.venv = make_async(
             cfg.env.name,
             env_type=env_type,
@@ -84,10 +100,10 @@ class TrainAgent:
             shape_meta=cfg.get("shape_meta", None),
             use_image_obs=cfg.env.get("use_image_obs", False),
             render=cfg.env.get("render", False),
-            render_offscreen=cfg.env.get("save_video", False),
+            render_offscreen=save_video, # Align with pretrain agent usage
             obs_dim=cfg.obs_dim,
             action_dim=cfg.action_dim,
-            **cfg.env.specific if "specific" in cfg.env else {},
+            **env_kwargs,
         )
         if not env_type == "furniture":
             self.venv.seed(
@@ -137,6 +153,15 @@ class TrainAgent:
         self.result_path = os.path.join(self.logdir, "result.pkl")
         os.makedirs(self.render_dir, exist_ok=True)
         os.makedirs(self.checkpoint_dir, exist_ok=True)
+        
+        # TensorBoard writer
+        try:
+            writer_dir = os.path.join(self.logdir, "tbdir")
+            os.makedirs(writer_dir, exist_ok=True)
+            self.writer = SummaryWriter(writer_dir)
+            log.info(f"TensorBoard writer initialized at {writer_dir}")
+        except Exception:
+            self.writer = None
         self.save_trajs = cfg.train.get("save_trajs", False)
         self.log_freq = cfg.train.get("log_freq", 1)
         self.save_model_freq = cfg.train.save_model_freq
@@ -218,3 +243,14 @@ class TrainAgent:
         if torch.cuda.is_available():
             log.info(f"GPU Memory Allocated: {torch.cuda.memory_allocated() / 1024**3:.2f} GB")
             log.info(f"GPU Memory Cached:    {torch.cuda.memory_reserved() / 1024**3:.2f}  GB")
+    
+    def close_writer(self):
+        """
+        Close the TensorBoard writer to ensure all data is written.
+        """
+        try:
+            if getattr(self, 'writer', None) is not None:
+                self.writer.close()
+                log.info("TensorBoard writer closed successfully")
+        except Exception as e:
+            log.error(f"Error closing TensorBoard writer: {e}")

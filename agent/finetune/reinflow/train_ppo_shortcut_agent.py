@@ -193,6 +193,8 @@ class TrainPPOShortCutAgent(TrainPPOAgent):
             self.adjust_finetune_schedule()# update finetune scheduler of ReFlow Policy
             self.save_model()
             self.itr += 1 
+        # Close TensorBoard writer at the end of training
+        self.close_writer()
             
     def adjust_finetune_schedule(self):
         # constant noise levels in intermediate steps, but the level changes over the course of training

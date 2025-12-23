@@ -43,6 +43,15 @@ def make_async(
     and conforms to gymnasium's reset/step signatures.
     """
 
+    # Fix for library conflict in this specific environment (Mesa vs Conda)
+    # Ensure libffi.so.7 is preloaded for swrast_dri.so to prevent llvmpipe/swrast failure
+    ffi_path = "/usr/lib/x86_64-linux-gnu/libffi.so.7"
+    if os.path.exists(ffi_path):
+        current_preload = os.environ.get("LD_PRELOAD", "")
+        if ffi_path not in current_preload:
+            os.environ["LD_PRELOAD"] = f"{current_preload}:{ffi_path}" if current_preload else ffi_path
+            print(f"Updated LD_PRELOAD for workers: {os.environ['LD_PRELOAD']}")
+
     if env_type == "furniture":
         from furniture_bench.envs.observation import DEFAULT_STATE_OBS
         from furniture_bench.envs.furniture_rl_sim_env import FurnitureRLSimEnv
@@ -135,14 +144,24 @@ def make_async(
             # Most gymnasium environments like CartPole don't accept render parameter
             if render_offscreen:
                 kwargs["render_mode"] = "rgb_array"
-                # Let Mujoco/Gymnasium decide the best backend (glfw/egl/osmesa)
-                os.environ["MUJOCO_GL"] = "egl"
-                os.environ["MESA_GL_VERSION_OVERRIDE"] = "3.3"
-                os.environ["MESA_GLSL_VERSION_OVERRIDE"] = "330"
-                os.environ["LIBGL_ALWAYS_SOFTWARE"] = "1"
-                os.environ["LIBGL_DRIVERS_PATH"] = "/usr/lib/x86_64-linux-gnu/dri"
             elif render:
                 kwargs["render_mode"] = "human"
+
+            # Let Mujoco/Gymnasium decide the best backend (glfw/egl/osmesa)
+            # If render_mode is rgb_array, we need to ensure backend is set correctly
+            if kwargs.get("render_mode") == "rgb_array":
+                # Ensure correct drivers are found (swrast exists here)
+                os.environ["MESA_GL_VERSION_OVERRIDE"] = "3.3"
+                os.environ["MESA_GLSL_VERSION_OVERRIDE"] = "330"
+                os.environ["LIBGL_DRIVERS_PATH"] = "/usr/lib/x86_64-linux-gnu/dri"
+
+                # Force EGL + Software Rendering (proven to work in pretrain if LD_PRELOAD is correct)
+                # This works headless and avoids Xvfb/GLFW issues
+                if "MUJOCO_GL" not in os.environ:
+                    os.environ["MUJOCO_GL"] = "egl"
+                
+                if os.environ["MUJOCO_GL"] == "egl":
+                    os.environ["LIBGL_ALWAYS_SOFTWARE"] = "1"
 
             if render and "kitchen" in env_name:
                 kwargs["render"] = render

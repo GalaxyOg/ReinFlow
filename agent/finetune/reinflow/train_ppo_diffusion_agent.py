@@ -256,3 +256,6 @@ class TrainPPODiffusionAgent(TrainPPOAgent):
             self.save_model()
             
             self.itr += 1
+        
+        # Close TensorBoard writer at the end of training
+        self.close_writer()

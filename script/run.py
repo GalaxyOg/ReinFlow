@@ -25,6 +25,23 @@
 Launcher for all experiments. Download pre-training data, normalization statistics, and pre-trained checkpoints if needed.
 Revised by ReinFlow Authors to accomodate resume training and fixing the kitchen tasks import error.
 """
+import os
+import sys
+
+# Auto-inject LD_PRELOAD for libffi.so.7 to fix library conflicts on this system
+# This is required to prevent "undefined symbol: ffi_type_sint32" errors when using EGL/OpenGL
+ffi_path = "/usr/lib/x86_64-linux-gnu/libffi.so.7"
+if os.path.exists(ffi_path):
+    current_preload = os.environ.get("LD_PRELOAD", "")
+    if ffi_path not in current_preload:
+        new_preload = f"{current_preload}:{ffi_path}" if current_preload else ffi_path
+        os.environ["LD_PRELOAD"] = new_preload
+        print(f"Injecting LD_PRELOAD={new_preload} and restarting process...")
+        try:
+            os.execv(sys.executable, [sys.executable] + sys.argv)
+        except OSError as e:
+            print(f"Failed to restart with LD_PRELOAD: {e}")
+
 # clear python cache automatically.
 from util.clear_pycache import clean_pycache
 from util.dirs import REINFLOW_DIR
@@ -89,7 +106,16 @@ def main(cfg: OmegaConf):
         else:
             raise ValueError(f"Invalid sim_device: {sim_device}. Must be a numeric GPU index.")
 
-        os.environ['MUJOCO_GL'] = 'egl'
+        # Determine rendering backend
+        # If DISPLAY is available (e.g. via xvfb-run), use GLFW which is proven to work with swrast+LD_PRELOAD
+        if os.environ.get("DISPLAY"):
+            os.environ['MUJOCO_GL'] = 'glfw'
+            log.info("DISPLAY detected, using MUJOCO_GL=glfw")
+        else:
+            # No display, fallback to EGL (might fail if permissions denied)
+            os.environ['MUJOCO_GL'] = 'egl'
+            log.info("No DISPLAY detected, defaulting to MUJOCO_GL=egl")
+
         os.environ['MUJOCO_sim_device_ID'] = str(sim_device)  # Convert to string for environment variable
         os.environ['sim_device_ID'] = str(sim_device)
         log.info(f"Set sim_device={sim_device} from cfg.")

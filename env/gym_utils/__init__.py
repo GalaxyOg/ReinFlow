@@ -127,7 +127,8 @@ def make_async(
         return env
 
     # avoid import error due incompatible gym versions
-    from gym import spaces
+    # from gym import spaces
+    from gymnasium import spaces
     from env.gym_utils.async_vector_env import AsyncVectorEnv
     from env.gym_utils.sync_vector_env import SyncVectorEnv
     from env.gym_utils.wrapper import wrapper_dict
@@ -243,9 +244,12 @@ def make_async(
     def dummy_env_fn():
         """TODO(allenzren): does this dummy env allow camera obs for other envs besides robomimic?"""
         import d4rl
-        import gym
         import numpy as np
         from env.gym_utils.wrapper.multi_step import MultiStep
+        try:
+            import gym
+        except ImportError:
+            import gymnasium as gym
 
         # Avoid importing or using env in the main process
         # to prevent OpenGL context issue with fork.

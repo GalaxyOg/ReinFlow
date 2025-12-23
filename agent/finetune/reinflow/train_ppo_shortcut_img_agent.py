@@ -198,17 +198,21 @@ class TrainPPOImgShortCutAgent(TrainPPOShortCutAgent):
             self.log()
             self.update_lr()
             self.adjust_finetune_schedule()# update finetune scheduler of ReFlow Policy
-            self.save_model()
-                              
+            self.save_model()                               
             
             self.itr += 1
             # early stopping
             if self.use_early_stop and (self.buffer.success_rate < 0.05 or self.buffer.avg_episode_reward < 2.0):
                 log.info(f"Your finetuning failed. success_rate={self.buffer.success_rate*100:.2f}% and avg_episode_reward={self.buffer.avg_episode_reward:.2f}")
+                # Close TensorBoard writer before exiting
+                self.close_writer()
                 exit()
             
             self.clear_cache()
             self.inspect_memory()
+        
+        # Close TensorBoard writer at the end of training
+        self.close_writer()
             
     # overload to accomodate gradaccum
     def agent_update(self, verbose=True):

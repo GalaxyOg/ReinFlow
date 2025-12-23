@@ -454,7 +454,21 @@ class AsyncVectorEnv(VectorEnv):
 
     def reset_arg(self, options_list, **kwargs):
         results = self.call_sync_arg("reset", "options", options_list)
-        obs = [result[0] for result in results]
+        # Handle (obs, info) tuple return from gymnasium
+        obs_list = []
+        for result in results:
+            ret, success = result
+            if isinstance(ret, tuple) and len(ret) == 2:
+                # Check if second element is likely info dict
+                if isinstance(ret[1], dict):
+                    obs_list.append(ret[0])
+                else:
+                    # Might be a tuple observation? Unlikely for top-level reset
+                    obs_list.append(ret)
+            else:
+                obs_list.append(ret)
+        
+        obs = obs_list
         if isinstance(obs[0], np.ndarray):
             return np.stack(obs)
         else:
