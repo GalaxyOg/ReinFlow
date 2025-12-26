@@ -580,7 +580,7 @@ class TrainPPOAgent(TrainAgent):
                     if getattr(self, 'writer', None) is not None:
                         for key, value in train_log_dict.items():
                             self.writer.add_scalar(key, float(value), self.itr)
-                except Exception:
-                    pass
+                except Exception as e:
+                    log.error(f"TensorBoard logging failed: {e}")
             with open(self.result_path, "wb") as f:
                 pickle.dump(self.run_results, f)
