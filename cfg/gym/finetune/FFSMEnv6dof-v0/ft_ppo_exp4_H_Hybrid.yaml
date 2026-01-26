@@ -14,25 +14,30 @@ defaults:
 hydra:
   run:
     dir: ${logdir}
-_target_: agent.finetune.reinflow.train_ppo_flow_agent.TrainPPOFlowAgent
-name: ${env_name}_ppo_reflow_mlp_ta${horizon_steps}_td${denoising_steps}
-logdir: ${oc.env:REINFLOW_LOG_DIR}/gym/finetune/${env_name}_ppo_reflow_mlp_ta${horizon_steps}_td${denoising_steps}_tdf${ft_denoising_steps}/${now:%Y-%m-%d}_${now:%H-%M-%S}_seed${seed}
+_target_: agent.finetune.reinflow.train_ppo_flow_agent_hlgauss.TrainPPOFlowAgentHLGauss
+name: ${env_name}_ppo_reflow_mlp_exp4_H_Hybrid_ta${horizon_steps}_td${denoising_steps}
+logdir: ${oc.env:REINFLOW_LOG_DIR}/gym/finetune/${env_name}_ppo_reflow_mlp_exp4_H_Hybrid_ta${horizon_steps}_td${denoising_steps}_tdf${ft_denoising_steps}/${now:%Y-%m-%d}_${now:%H-%M-%S}_seed${seed}
 base_policy_path: ${oc.env:REINFLOW_LOG_DIR}/gym/pretrain/FFSMEnv6dof-v0_pre_reflow_mlp_ta1_td4_seed42/2025-12-28_15-37-41_42/checkpoint/last.pt
-# base_policy_path: null
-# ${oc.env:REINFLOW_LOG_DIR}/gym/pretrain/hopper-v2/ReFlow/2025-02-06_01-35-03_42/checkpoint/state_1500.pt
 normalization_path: ${oc.env:REINFLOW_DATA_DIR}/gym/${env_name}/normalization.npz
 resume_path: null
 seed: 42
-device: cuda:1
-sim_device: cuda:1
+device: cuda:3
+sim_device: cuda:3
 denoising_steps: 4
 ft_denoising_steps: 4
-min_std: 0.08
-max_std: 0.16
+min_std: 0.12 # Increased from 0.08
+max_std: 0.20 # Increased from 0.16
+
+# HL-Gauss Parameters
+hl_gauss_min_value: -300.0 
+hl_gauss_max_value: 10.0
+hl_gauss_num_bins: 101
+hl_gauss_sigma: 1.0
+
 env:
-  n_envs: 16 # Optimized for 4 concurrent tasks on 80-core CPU (80/4 = 20 max, leaving headroom)
+  n_envs: 16
   name: ${env_name}
-  max_episode_steps: 1000
+  max_episode_steps: 200
   reset_at_iteration: false
   save_video: True
   best_reward_threshold_for_success: -0.1
@@ -50,17 +55,17 @@ wandb:
   run: ${now:%Y-%m-%d}_${now:%H-%M-%S}_${name}
   offline_mode: True
 train:
-  n_train_itr: 1001
+  n_train_itr: 600
   n_critic_warmup_itr: 5
   n_steps: 500
   gamma: 0.99
-  actor_lr: 4.5e-05
+  actor_lr: 1.0e-05
   actor_weight_decay: 0
   actor_lr_scheduler:
     type: cosine
     first_cycle_steps: 100
     warmup_steps: 10
-    min_lr: 2.0e-05
+    min_lr: 1.0e-05
   critic_lr: 6.5e-4
   critic_weight_decay: 1.0e-05
   critic_lr_scheduler:
@@ -68,18 +73,18 @@ train:
     first_cycle_steps: 100
     warmup_steps: 10
     min_lr: 3e-4
-  save_model_freq: 1000
+  save_model_freq: 200
   val_freq: 10
   render:
     freq: 40
     num: 1
-  reward_scale_running: true
+  reward_scale_running: false
   reward_scale_const: 1.0
   gae_lambda: 0.95
   batch_size: 50000
   update_epochs: 5
   vf_coef: 0.5
-  ent_coef: 0.03 #熵系数，控制探索强度
+  ent_coef: 0.01 # Increased entropy
   target_kl: 1.0
   lr_schedule: fixed
   repeat_samples: true
@@ -88,12 +93,15 @@ train:
   account_for_initial_stochasticity: true
   max_noise_hold_ratio: 0.35
   max_noise_decay_ratio: 0.7
-  # Enable BC Loss for regularization
-  use_bc_loss: False       
-  # bc_loss_type: W2        
-  # bc_loss_coeff: 0.3 
+  use_bc_loss: True       
+  bc_loss_type: W2        
+  bc_loss_coeff: 0.05     
 model:
-  _target_: model.flow.ft_ppo.ppoflow.PPOFlow
+  _target_: model.flow.ft_ppo.ppoflow_hlgauss.PPOFlowHLGauss
+  hl_gauss_min_value: ${hl_gauss_min_value}
+  hl_gauss_max_value: ${hl_gauss_max_value}
+  hl_gauss_num_bins: ${hl_gauss_num_bins}
+  hl_gauss_sigma: ${hl_gauss_sigma}
   device: ${device}
   policy:
     _target_: model.flow.mlp_flow.FlowMLP
@@ -107,7 +115,8 @@ model:
     use_layernorm: true
     residual_style: true
   critic:
-    _target_: model.common.critic.CriticObs
+    _target_: model.common.critic_hlgauss.CriticObsHLGauss
+    output_dim: ${hl_gauss_num_bins}
     cond_dim: ${eval:'${obs_dim} * ${cond_steps}'}
     mlp_dims: [256,256,256]
     activation_type: Mish

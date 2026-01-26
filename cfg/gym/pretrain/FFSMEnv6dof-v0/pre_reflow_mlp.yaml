@@ -4,7 +4,7 @@ env: FFSMEnv6dof-v0
 
 # future action forecasts
 action_dim: 21
-horizon_steps: 4
+horizon_steps: 1
 
 # observation history
 obs_dim: 48
@@ -24,17 +24,17 @@ use_d4rl_dataset: False
 test_in_mujoco: True
 # base_policy_path: /home/yh/Algo_test/ReinFlow/logs/gym/pretrain/FFSM-6dof-v0_pre_reflow_mlp_ta4_td40_seed42/2025-11-29_11-58-07_42/checkpoint/best.pt
 seed: 42
-device: cuda:1
-sim_device: cuda:2
-denoising_steps: 40
-batch_size: 128
+device: cuda:4
+sim_device: cuda:4
+denoising_steps: 4
+batch_size: 256
 train:
-  n_epochs: 100            #3000, 200
+  n_epochs: 1000            # Optimized from 3000
   batch_size: ${batch_size}
   learning_rate: 1e-3
   weight_decay: 1e-6
   lr_scheduler:
-    first_cycle_steps: ${train.n_epochs} # 200
+    first_cycle_steps: ${train.n_epochs} # 1000
     warmup_steps: 1
     min_lr: 1e-4
   save_model_freq: 1500
@@ -53,9 +53,9 @@ model:
     cond_dim: ${eval:'${obs_dim} * ${cond_steps}'}
     time_dim: 16
     mlp_dims: [512, 512, 512]
-    activation_type: ReLU
+    activation_type: Mish
     out_activation_type: Identity
-    use_layernorm: False
+    use_layernorm: True
     residual_style: True
   device: ${device}
   horizon_steps: ${horizon_steps}

@@ -23,8 +23,8 @@ base_policy_path: ${oc.env:REINFLOW_LOG_DIR}/gym/pretrain/FFSMEnv6dof-v0_pre_ref
 normalization_path: ${oc.env:REINFLOW_DATA_DIR}/gym/${env_name}/normalization.npz
 resume_path: null
 seed: 42
-device: cuda:1
-sim_device: cuda:1
+device: cuda:4
+sim_device: cuda:4
 denoising_steps: 4
 ft_denoising_steps: 4
 min_std: 0.08
@@ -32,7 +32,7 @@ max_std: 0.16
 env:
   n_envs: 16 # Optimized for 4 concurrent tasks on 80-core CPU (80/4 = 20 max, leaving headroom)
   name: ${env_name}
-  max_episode_steps: 1000
+  max_episode_steps: 200
   reset_at_iteration: false
   save_video: True
   best_reward_threshold_for_success: -0.1
@@ -50,17 +50,17 @@ wandb:
   run: ${now:%Y-%m-%d}_${now:%H-%M-%S}_${name}
   offline_mode: True
 train:
-  n_train_itr: 1001
+  n_train_itr: 600
   n_critic_warmup_itr: 5
   n_steps: 500
   gamma: 0.99
-  actor_lr: 4.5e-05
+  actor_lr: 1.0e-05
   actor_weight_decay: 0
   actor_lr_scheduler:
     type: cosine
     first_cycle_steps: 100
     warmup_steps: 10
-    min_lr: 2.0e-05
+    min_lr: 1.0e-05
   critic_lr: 6.5e-4
   critic_weight_decay: 1.0e-05
   critic_lr_scheduler:
@@ -68,7 +68,7 @@ train:
     first_cycle_steps: 100
     warmup_steps: 10
     min_lr: 3e-4
-  save_model_freq: 1000
+  save_model_freq: 200
   val_freq: 10
   render:
     freq: 40
@@ -79,7 +79,7 @@ train:
   batch_size: 50000
   update_epochs: 5
   vf_coef: 0.5
-  ent_coef: 0.03 #熵系数，控制探索强度
+  ent_coef: 0.0 #熵系数，控制探索强度
   target_kl: 1.0
   lr_schedule: fixed
   repeat_samples: true

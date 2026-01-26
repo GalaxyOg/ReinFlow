@@ -74,6 +74,13 @@ OmegaConf.register_new_resolver("round_down", math.floor)
 # suppress d4rl import error
 os.environ["D4RL_SUPPRESS_IMPORT_ERROR"] = "1"
 
+# Force single-thread execution for underlying libraries to avoid CPU oversubscription
+os.environ["OMP_NUM_THREADS"] = "1"
+os.environ["MKL_NUM_THREADS"] = "1"
+os.environ["OPENBLAS_NUM_THREADS"] = "1"
+os.environ["VECLIB_MAXIMUM_THREADS"] = "1"
+os.environ["NUMEXPR_NUM_THREADS"] = "1"
+
 # add logger
 log = logging.getLogger(__name__)
 
