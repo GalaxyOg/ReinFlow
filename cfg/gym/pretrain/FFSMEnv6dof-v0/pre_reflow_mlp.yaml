@@ -22,6 +22,7 @@ train_dataset_path: ${oc.env:REINFLOW_DATA_DIR}/gym/${env}/train.npz
 normalization_path: ${oc.env:REINFLOW_DATA_DIR}/gym/${env}/normalization.npz
 use_d4rl_dataset: False
 test_in_mujoco: True
+best_reward_threshold_for_success: -0.1
 # base_policy_path: /home/yh/Algo_test/ReinFlow/logs/gym/pretrain/FFSM-6dof-v0_pre_reflow_mlp_ta4_td40_seed42/2025-11-29_11-58-07_42/checkpoint/best.pt
 seed: 42
 device: cuda:4

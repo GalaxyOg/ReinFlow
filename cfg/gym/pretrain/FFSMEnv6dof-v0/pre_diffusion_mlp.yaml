@@ -22,6 +22,7 @@ train_dataset_path: /home/yh/Algo_test/expert_data/tqc_25/train.npz
 normalization_path: /home/yh/Algo_test/expert_data/tqc_25/normalization.npz
 use_d4rl_dataset: False
 test_in_mujoco: True
+best_reward_threshold_for_success: -0.1
 seed: 42
 device: cuda:0
 sim_device: cuda:1
@@ -73,7 +74,6 @@ train_dataset:
   cond_steps: ${cond_steps}
   device: ${device}
   max_n_episodes: -1
-
 
 
 

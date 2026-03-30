@@ -21,6 +21,7 @@ logdir: ${oc.env:REINFLOW_LOG_DIR}/gym/pretrain/${name}/${now:%Y-%m-%d}_${now:%H
 train_dataset_path: /home/yh/Algo_test/expert_data/tqc_25/train.npz
 normalization_path: /home/yh/Algo_test/expert_data/tqc_25/normalization.npz
 use_d4rl_dataset: False
+best_reward_threshold_for_success: -0.1
 seed: 42
 device: cuda:4
 sim_device: cuda:3

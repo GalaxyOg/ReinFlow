@@ -212,10 +212,17 @@ class PreTrainAgent:
             if not normalization_path:
                 raise ValueError(f"Hey you must specify your normalization path if you wish to evaluate periodically during pretraining, but I can't find it in your configuration! Is {os.path.join(REINFLOW_DATA_DIR,'gym',cfg.env,'normalization.npz')} the correct path I guess? Also, make sure to secure that your normalization file truly correspond to your pretraining data, other wise there will be a significant mismatch in preformance. ")
             if cfg.env_suite=='gym':
+                # Keep backward compatibility (default=3.0) while allowing
+                # task-specific success thresholds (e.g., FFSM uses negative rewards).
+                gym_success_threshold = 3.0
+                if "eval_env" in cfg and cfg.eval_env.get("best_reward_threshold_for_success", None) is not None:
+                    gym_success_threshold = float(cfg.eval_env.best_reward_threshold_for_success)
+                elif cfg.get("best_reward_threshold_for_success", None) is not None:
+                    gym_success_threshold = float(cfg.best_reward_threshold_for_success)
                 env_max_episode_steps=1_000
                 rollout_n_steps=5_00
                 n_eval_envs=4
-                best_reward_threshold_for_success=3.0
+                best_reward_threshold_for_success=gym_success_threshold
                 robomimic_env_cfg_path=None
                 shape_meta=None
                 use_image_obs=False
@@ -241,6 +248,10 @@ class PreTrainAgent:
                 wrappers=cfg.eval_env.wrappers
             else:
                 raise NotImplementedError(f"Sorry about that, we have not yet implemented evaluation for cfg.env_suite={cfg.env_suite} environment with MuJoCo simulator during pre-training. Coming soon!")
+            log.info(
+                "Pretrain eval threshold: best_reward_threshold_for_success=%s",
+                best_reward_threshold_for_success,
+            )
             self.env_config = EnvConfig(
                 n_envs=n_eval_envs,
                 name=cfg.env,
@@ -827,12 +838,12 @@ class PreTrainAgent:
         time = timer()
         if log_all:
             log.info(
-                    f"eval: success rate {self.success_rate:8.4f} | avg episode reward {self.avg_episode_reward:8.1f}±{self.avg_episode_reward_std:2.1f} | avg_episode_length {self.avg_episode_length:4.2f}±{self.avg_episode_length_std:4.2f} | num episode {num_episode_finished:4d} | avg best reward {self.avg_best_reward:8.1f}±{self.avg_best_reward_std:2.1f} |"
-                )
+                f"eval: success rate {self.success_rate:8.4f} (thr={self.best_reward_threshold_for_success:4.2f}) | avg episode reward {self.avg_episode_reward:8.1f}±{self.avg_episode_reward_std:2.1f} | avg_episode_length {self.avg_episode_length:4.2f}±{self.avg_episode_length_std:4.2f} | num episode {num_episode_finished:4d} | avg best reward {self.avg_best_reward:8.1f}±{self.avg_best_reward_std:2.1f} |"
+            )
         else:
             log.info(
-                    f"eval: success rate {self.success_rate*100:2.2f}%| avg episode reward {self.avg_episode_reward:8.1f}±{self.avg_episode_reward_std:2.1f}"
-                )
+                f"eval: success rate {self.success_rate*100:2.2f}% (thr={self.best_reward_threshold_for_success:4.2f})| avg episode reward {self.avg_episode_reward:8.1f}±{self.avg_episode_reward_std:2.1f}"
+            )
         if log_all:
             np.savez(
                 self.result_path,
