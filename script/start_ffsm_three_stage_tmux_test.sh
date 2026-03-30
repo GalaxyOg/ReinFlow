@@ -44,6 +44,8 @@ SKIP_CONDA_ACTIVATE="${SKIP_CONDA_ACTIVATE:-0}"
 USE_XVFB="${USE_XVFB:-1}"
 DRY_RUN="${DRY_RUN:-0}"
 START_DELAY_SECONDS="${START_DELAY_SECONDS:-1}"
+KEEP_SESSION_ON_EXIT="${KEEP_SESSION_ON_EXIT:-1}"
+TMUX_LOG_DIR="${TMUX_LOG_DIR:-${REPO_ROOT}/log/ffsm_tmux}"
 
 function require_cmd() {
   command -v "$1" >/dev/null 2>&1 || {
@@ -105,13 +107,34 @@ EOF
 function launch_tmux_session() {
   local session_name="$1"
   local body="$2"
+  local ts
+  ts="$(date +%Y%m%d_%H%M%S)"
+  local log_file="${TMUX_LOG_DIR}/${session_name}_${ts}.log"
+  mkdir -p "${TMUX_LOG_DIR}"
 
   local runner
   runner="$(mktemp "/tmp/${session_name}.XXXX.sh")"
   {
     session_script_prefix
     echo ""
+    echo "LOG_FILE='${log_file}'"
+    echo "echo \"[INFO] session=${session_name}\" | tee -a \"\${LOG_FILE}\""
+    echo "echo \"[INFO] start_time=\$(date '+%F %T')\" | tee -a \"\${LOG_FILE}\""
+    echo "echo \"[INFO] pwd=\$(pwd)\" | tee -a \"\${LOG_FILE}\""
+    echo "exec > >(tee -a \"\${LOG_FILE}\") 2>&1"
+    echo "set +e"
     echo "${body}"
+    echo "stage_status=\$?"
+    echo "set -e"
+    echo "echo \"[INFO] end_time=\$(date '+%F %T')\""
+    echo "echo \"[INFO] exit_code=\${stage_status}\""
+    echo "echo \"[INFO] log_file=\${LOG_FILE}\""
+    echo "if [[ \"${KEEP_SESSION_ON_EXIT}\" == \"1\" ]]; then"
+    echo "  echo \"[INFO] 任务已结束，保留会话用于排查。输入 exit 可关闭会话。\""
+    echo "  exec bash"
+    echo "else"
+    echo "  exit \${stage_status}"
+    echo "fi"
   } > "${runner}"
   chmod +x "${runner}"
 
@@ -122,12 +145,13 @@ function launch_tmux_session() {
   if [[ "${DRY_RUN}" == "1" ]]; then
     echo "[DRY_RUN] session=${session_name}"
     echo "[DRY_RUN] script=${runner}"
+    echo "[DRY_RUN] log_file=${log_file}"
     sed -n '1,220p' "${runner}"
     return
   fi
 
   tmux new-session -d -s "${session_name}" "bash '${runner}'"
-  echo "[OK] 启动 session: ${session_name}"
+  echo "[OK] 启动 session: ${session_name} (log: ${log_file})"
 }
 
 function main() {
@@ -166,6 +190,8 @@ function main() {
   echo "[INFO] TRAIN_DATASET_PATH=${TRAIN_DATASET_PATH}"
   echo "[INFO] NORMALIZATION_PATH=${NORMALIZATION_PATH}"
   echo "[INFO] BASE_POLICY_PATH=${base_policy_path}"
+  echo "[INFO] KEEP_SESSION_ON_EXIT=${KEEP_SESSION_ON_EXIT}"
+  echo "[INFO] TMUX_LOG_DIR=${TMUX_LOG_DIR}"
   if [[ -n "${expert_model_path}" ]]; then
     echo "[INFO] Latest existing expert model=${expert_model_path}"
   fi
