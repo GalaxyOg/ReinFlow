@@ -25,10 +25,19 @@ CUDA_FINETUNE="${CUDA_FINETUNE:-2}"
 # 训练测试强度（默认是“能跑通优先”的小规模）
 SEED="${SEED:-42}"
 EXPERT_ALGO="${EXPERT_ALGO:-sac}"
-EXPERT_TIMESTEPS="${EXPERT_TIMESTEPS:-50000}"
-PRETRAIN_EPOCHS="${PRETRAIN_EPOCHS:-10}"
+LONG_TEST="${LONG_TEST:-0}"
+EXPERT_TIMESTEPS_DEFAULT="50000"
+PRETRAIN_EPOCHS_DEFAULT="10"
+FINETUNE_ITR_DEFAULT="20"
+if [[ "${LONG_TEST}" == "1" ]]; then
+  EXPERT_TIMESTEPS_DEFAULT="500000"
+  PRETRAIN_EPOCHS_DEFAULT="100"
+  FINETUNE_ITR_DEFAULT="300"
+fi
+EXPERT_TIMESTEPS="${EXPERT_TIMESTEPS:-${EXPERT_TIMESTEPS_DEFAULT}}"
+PRETRAIN_EPOCHS="${PRETRAIN_EPOCHS:-${PRETRAIN_EPOCHS_DEFAULT}}"
 PRETRAIN_BATCH_SIZE="${PRETRAIN_BATCH_SIZE:-64}"
-FINETUNE_ITR="${FINETUNE_ITR:-20}"
+FINETUNE_ITR="${FINETUNE_ITR:-${FINETUNE_ITR_DEFAULT}}"
 FINETUNE_STEPS="${FINETUNE_STEPS:-64}"
 FINETUNE_N_ENVS="${FINETUNE_N_ENVS:-4}"
 FINETUNE_BATCH_SIZE="${FINETUNE_BATCH_SIZE:-1024}"
@@ -96,12 +105,79 @@ function session_script_prefix() {
 #!/usr/bin/env bash
 set -Eeuo pipefail
 if [[ "${SKIP_CONDA_ACTIVATE}" != "1" ]]; then
-  if [[ -f "\$HOME/anaconda3/etc/profile.d/conda.sh" ]]; then
-    source "\$HOME/anaconda3/etc/profile.d/conda.sh"
-    conda activate "${CONDA_ENV_NAME}" || true
+  _conda_sh=""
+  for _p in "\$HOME/anaconda3/etc/profile.d/conda.sh" "\$HOME/miniconda3/etc/profile.d/conda.sh" "\$HOME/mambaforge/etc/profile.d/conda.sh"; do
+    if [[ -f "\$_p" ]]; then
+      _conda_sh="\$_p"
+      break
+    fi
+  done
+  if [[ -z "\$_conda_sh" ]] && command -v conda >/dev/null 2>&1; then
+    _base="\$(conda info --base 2>/dev/null || true)"
+    if [[ -n "\$_base" && -f "\$_base/etc/profile.d/conda.sh" ]]; then
+      _conda_sh="\$_base/etc/profile.d/conda.sh"
+    fi
   fi
+  if [[ -z "\$_conda_sh" ]]; then
+    echo "[ERROR] 找不到 conda.sh，无法激活环境 ${CONDA_ENV_NAME}" >&2
+    exit 1
+  fi
+  source "\$_conda_sh"
+  conda activate "${CONDA_ENV_NAME}"
+  echo "[INFO] conda_env=\${CONDA_DEFAULT_ENV:-<none>}"
+  python -c "import sys; print('[INFO] python_exe=' + sys.executable)"
 fi
 EOF
+}
+
+function activate_conda_in_main() {
+  if [[ "${SKIP_CONDA_ACTIVATE}" == "1" ]]; then
+    echo "[WARN] SKIP_CONDA_ACTIVATE=1，跳过主进程 conda 激活"
+    return
+  fi
+  local conda_sh=""
+  for p in "$HOME/anaconda3/etc/profile.d/conda.sh" "$HOME/miniconda3/etc/profile.d/conda.sh" "$HOME/mambaforge/etc/profile.d/conda.sh"; do
+    if [[ -f "${p}" ]]; then
+      conda_sh="${p}"
+      break
+    fi
+  done
+  if [[ -z "${conda_sh}" ]] && command -v conda >/dev/null 2>&1; then
+    local base
+    base="$(conda info --base 2>/dev/null || true)"
+    if [[ -n "${base}" && -f "${base}/etc/profile.d/conda.sh" ]]; then
+      conda_sh="${base}/etc/profile.d/conda.sh"
+    fi
+  fi
+  if [[ -z "${conda_sh}" ]]; then
+    echo "[ERROR] 找不到 conda.sh，无法激活环境 ${CONDA_ENV_NAME}" >&2
+    exit 1
+  fi
+  # shellcheck source=/dev/null
+  source "${conda_sh}"
+  conda activate "${CONDA_ENV_NAME}"
+  echo "[INFO] main_conda_env=${CONDA_DEFAULT_ENV:-<none>}"
+  python -c "import sys; print('[INFO] main_python_exe=' + sys.executable)"
+}
+
+function validate_cuda_slot() {
+  local stage="$1"
+  local cuda_slot="$2"
+  if ! CUDA_VISIBLE_DEVICES="${cuda_slot}" python - "${stage}" "${cuda_slot}" <<'PY'
+import sys
+import torch
+stage = sys.argv[1]
+slot = sys.argv[2]
+ok = torch.cuda.is_available() and torch.cuda.device_count() > 0
+if not ok:
+    raise SystemExit(f"[ERROR] {stage}: CUDA_VISIBLE_DEVICES={slot} 不可用（torch.cuda 不可用）")
+_ = torch.tensor([1.0], device="cuda:0")
+print(f"[INFO] {stage}: CUDA_VISIBLE_DEVICES={slot} -> cuda:0 可用 ({torch.cuda.get_device_name(0)})")
+PY
+  then
+    echo "[ERROR] ${stage} 的 GPU 配置不可用，请调整 CUDA_EXPERT/CUDA_PRETRAIN/CUDA_FINETUNE" >&2
+    exit 1
+  fi
 }
 
 function launch_tmux_session() {
@@ -160,6 +236,7 @@ function main() {
   require_dir "${REPO_ROOT}"
   require_dir "${FFSM_ENV_ROOT}"
   require_dir "${FFSM_RLZOO_DIR}"
+  activate_conda_in_main
 
   require_file "${TRAIN_DATASET_PATH}"
   require_file "${NORMALIZATION_PATH}"
@@ -180,6 +257,10 @@ function main() {
   fi
   require_file "${base_policy_path}"
 
+  validate_cuda_slot "expert" "${CUDA_EXPERT}"
+  validate_cuda_slot "pretrain" "${CUDA_PRETRAIN}"
+  validate_cuda_slot "finetune" "${CUDA_FINETUNE}"
+
   local run_prefix=""
   if [[ "${USE_XVFB}" == "1" ]] && command -v xvfb-run >/dev/null 2>&1; then
     run_prefix="xvfb-run -a "
@@ -192,6 +273,10 @@ function main() {
   echo "[INFO] BASE_POLICY_PATH=${base_policy_path}"
   echo "[INFO] KEEP_SESSION_ON_EXIT=${KEEP_SESSION_ON_EXIT}"
   echo "[INFO] TMUX_LOG_DIR=${TMUX_LOG_DIR}"
+  echo "[INFO] LONG_TEST=${LONG_TEST}"
+  echo "[INFO] EXPERT_TIMESTEPS=${EXPERT_TIMESTEPS}"
+  echo "[INFO] PRETRAIN_EPOCHS=${PRETRAIN_EPOCHS}"
+  echo "[INFO] FINETUNE_ITR=${FINETUNE_ITR}"
   if [[ -n "${expert_model_path}" ]]; then
     echo "[INFO] Latest existing expert model=${expert_model_path}"
   fi
@@ -199,13 +284,19 @@ function main() {
   local expert_body
   expert_body="
 cd '${FFSM_RLZOO_DIR}'
+export CUDA_DEVICE_ORDER=PCI_BUS_ID
+unset CUDA_VISIBLE_DEVICES
+export CUDA_VISIBLE_DEVICES='${CUDA_EXPERT}'
 export PYTHONPATH='${FFSM_ENV_ROOT}:\${PYTHONPATH:-}'
-python -m rl_zoo3.train --algo ${EXPERT_ALGO} --env FFSMEnv6dof-v0 --verbose 0 -P --device cuda:${CUDA_EXPERT} --vec-env subproc --conf-file '${expert_conf}' --seed ${SEED} -n ${EXPERT_TIMESTEPS}
+python -m rl_zoo3.train --algo ${EXPERT_ALGO} --env FFSMEnv6dof-v0 --verbose 0 -P --device cuda:0 --vec-env subproc --conf-file '${expert_conf}' --seed ${SEED} -n ${EXPERT_TIMESTEPS}
 "
 
   local pretrain_body
   pretrain_body="
 cd '${REPO_ROOT}'
+export CUDA_DEVICE_ORDER=PCI_BUS_ID
+unset CUDA_VISIBLE_DEVICES
+export CUDA_VISIBLE_DEVICES='${CUDA_PRETRAIN}'
 export REINFLOW_DIR='${REPO_ROOT}'
 export REINFLOW_DATA_DIR='${DATA_ROOT}'
 export REINFLOW_LOG_DIR='${LOG_ROOT}'
@@ -216,8 +307,8 @@ ${run_prefix}python script/run.py \\
   train_dataset_path='${TRAIN_DATASET_PATH}' \\
   normalization_path='${NORMALIZATION_PATH}' \\
   use_d4rl_dataset=False \\
-  device=cuda:${CUDA_PRETRAIN} \\
-  sim_device=cuda:${CUDA_PRETRAIN} \\
+  device=cuda:0 \\
+  sim_device=cuda:0 \\
   seed=${SEED} \\
   wandb.offline_mode=True \\
   batch_size=${PRETRAIN_BATCH_SIZE} \\
@@ -229,6 +320,9 @@ ${run_prefix}python script/run.py \\
   local finetune_body
   finetune_body="
 cd '${REPO_ROOT}'
+export CUDA_DEVICE_ORDER=PCI_BUS_ID
+unset CUDA_VISIBLE_DEVICES
+export CUDA_VISIBLE_DEVICES='${CUDA_FINETUNE}'
 export REINFLOW_DIR='${REPO_ROOT}'
 export REINFLOW_DATA_DIR='${DATA_ROOT}'
 export REINFLOW_LOG_DIR='${LOG_ROOT}'
@@ -238,8 +332,8 @@ ${run_prefix}python script/run.py \\
   --config-name=ft_ppo_reflow_mlp \\
   base_policy_path='${base_policy_path}' \\
   normalization_path='${NORMALIZATION_PATH}' \\
-  device=cuda:${CUDA_FINETUNE} \\
-  sim_device=cuda:${CUDA_FINETUNE} \\
+  device=cuda:0 \\
+  sim_device=cuda:0 \\
   seed=${SEED} \\
   wandb.offline_mode=True \\
   env.save_video=False \\
