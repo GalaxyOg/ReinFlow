@@ -1,21 +1,19 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-# FFSM 3-stage test launcher
-# Stage 1: rl-zoo3 expert training (in FFSM_Env)
+# FFSM 3-stage launcher
+# Stage 1: rl-zoo3 expert training (from installed ffsm_env package)
 # Stage 2: ReFlow pretraining (in ReinFlow)
 # Stage 3: ReinFlow finetuning (in ReinFlow, from existing checkpoint)
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 
-FFSM_ENV_ROOT="${FFSM_ENV_ROOT:-$(cd "${REPO_ROOT}/../FFSM_Env" && pwd)}"
-FFSM_RLZOO_DIR="${FFSM_ENV_ROOT}/rl-zoo3"
-
 DATA_ROOT="${REINFLOW_DATA_DIR:-${REPO_ROOT}/data}"
 LOG_ROOT="${REINFLOW_LOG_DIR:-${REPO_ROOT}/log}"
 TRAIN_DATASET_PATH="${TRAIN_DATASET_PATH:-${DATA_ROOT}/gym/FFSMEnv6dof-v0/train.npz}"
 NORMALIZATION_PATH="${NORMALIZATION_PATH:-${DATA_ROOT}/gym/FFSMEnv6dof-v0/normalization.npz}"
+EXPERT_LOG_ROOT="${EXPERT_LOG_ROOT:-${LOG_ROOT}/expert/rl_zoo3}"
 
 # 设备分配（默认三张卡）
 CUDA_EXPERT="${CUDA_EXPERT:-0}"
@@ -25,6 +23,7 @@ CUDA_FINETUNE="${CUDA_FINETUNE:-2}"
 # 训练测试强度（默认是“能跑通优先”的小规模）
 SEED="${SEED:-42}"
 EXPERT_ALGO="${EXPERT_ALGO:-sac}"
+EXPERT_CONF_FILE="${EXPERT_CONF_FILE:-${REPO_ROOT}/cfg/ffsm/expert/ffsm_${EXPERT_ALGO}_hyperparams.yml}"
 LONG_TEST="${LONG_TEST:-0}"
 EXPERT_TIMESTEPS_DEFAULT="50000"
 PRETRAIN_EPOCHS_DEFAULT="10"
@@ -249,18 +248,26 @@ function main() {
   require_cmd tmux
   require_cmd python
   require_dir "${REPO_ROOT}"
-  require_dir "${FFSM_ENV_ROOT}"
-  require_dir "${FFSM_RLZOO_DIR}"
   activate_conda_in_main
 
   require_file "${TRAIN_DATASET_PATH}"
   require_file "${NORMALIZATION_PATH}"
+  require_file "${EXPERT_CONF_FILE}"
+  mkdir -p "${EXPERT_LOG_ROOT}"
 
-  local expert_conf="${FFSM_RLZOO_DIR}/ffsm_${EXPERT_ALGO}_hyperparams.yml"
-  require_file "${expert_conf}"
+  if ! python - <<'PY'
+import importlib
+importlib.import_module("ffsm_env")
+importlib.import_module("rl_zoo3")
+print("[INFO] python import check: ffsm_env + rl_zoo3 OK")
+PY
+  then
+    echo "[ERROR] 未能导入 ffsm_env/rl_zoo3。请先安装 FFSM_Env 包并确认 rl_zoo3 可用。" >&2
+    exit 1
+  fi
 
   local expert_model_path
-  expert_model_path="$(find "${FFSM_RLZOO_DIR}/logs/${EXPERT_ALGO}" -maxdepth 3 -type f -name best_model.zip 2>/dev/null | sort | tail -n 1 || true)"
+  expert_model_path="$(find "${EXPERT_LOG_ROOT}/${EXPERT_ALGO}" -maxdepth 3 -type f -name best_model.zip 2>/dev/null | sort | tail -n 1 || true)"
 
   local base_policy_path
   base_policy_path="${BASE_POLICY_PATH:-}"
@@ -296,7 +303,8 @@ function main() {
   fi
 
   echo "[INFO] REPO_ROOT=${REPO_ROOT}"
-  echo "[INFO] FFSM_ENV_ROOT=${FFSM_ENV_ROOT}"
+  echo "[INFO] EXPERT_LOG_ROOT=${EXPERT_LOG_ROOT}"
+  echo "[INFO] EXPERT_CONF_FILE=${EXPERT_CONF_FILE}"
   echo "[INFO] TRAIN_DATASET_PATH=${TRAIN_DATASET_PATH}"
   echo "[INFO] NORMALIZATION_PATH=${NORMALIZATION_PATH}"
   echo "[INFO] BASE_POLICY_PATH=${base_policy_path}"
@@ -314,12 +322,11 @@ function main() {
 
   local expert_body
   expert_body="
-cd '${FFSM_RLZOO_DIR}'
+cd '${REPO_ROOT}'
 export CUDA_DEVICE_ORDER=PCI_BUS_ID
 unset CUDA_VISIBLE_DEVICES
 export CUDA_VISIBLE_DEVICES='${CUDA_EXPERT}'
-export PYTHONPATH='${FFSM_ENV_ROOT}:\${PYTHONPATH:-}'
-python -m rl_zoo3.train --algo ${EXPERT_ALGO} --env FFSMEnv6dof-v0 --verbose 0 -P --device cuda:0 --vec-env subproc --conf-file '${expert_conf}' --seed ${SEED} -n ${EXPERT_TIMESTEPS}
+python -m rl_zoo3.train --algo ${EXPERT_ALGO} --env FFSMEnv6dof-v0 --verbose 0 -P --device cuda:0 --vec-env subproc --gym-packages ffsm_env --log-folder '${EXPERT_LOG_ROOT}' --conf-file '${EXPERT_CONF_FILE}' --seed ${SEED} -n ${EXPERT_TIMESTEPS}
 "
 
   local pretrain_body

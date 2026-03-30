@@ -2,7 +2,7 @@
 """FFSM end-to-end pipeline runner for ReinFlow.
 
 Stages:
-1) Train expert policy with rl-zoo3 in FFSM_Env
+1) Train expert policy with rl-zoo3 (logs saved in ReinFlow)
 2) Export expert rollouts to ReinFlow dataset format
 3) Pretrain ReFlow policy with offline dataset
 4) RL finetune from pretrained checkpoint
@@ -25,7 +25,10 @@ import numpy as np
 REPO_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_DATA_ROOT = Path(os.environ.get("REINFLOW_DATA_DIR", REPO_ROOT / "data"))
 DEFAULT_LOG_ROOT = Path(os.environ.get("REINFLOW_LOG_DIR", REPO_ROOT / "log"))
-DEFAULT_FFSM_ENV_ROOT = (REPO_ROOT.parent / "FFSM_Env").resolve()
+DEFAULT_EXPERT_LOG_ROOT = Path(
+    os.environ.get("REINFLOW_EXPERT_LOG_DIR", DEFAULT_LOG_ROOT / "expert" / "rl_zoo3")
+)
+DEFAULT_EXPERT_CONF_DIR = REPO_ROOT / "cfg" / "ffsm" / "expert"
 
 
 def _bool_str(flag: bool) -> str:
@@ -70,19 +73,9 @@ def _run_cmd(
     subprocess.run(list(cmd), cwd=str(cwd) if cwd else None, env=env, check=True)
 
 
-def _merge_pythonpath(extra_path: Path, base_env: Optional[Dict[str, str]] = None) -> Dict[str, str]:
-    env = {} if base_env is None else dict(base_env)
-    original = os.environ.get("PYTHONPATH", "")
-    parts = [str(extra_path)]
-    if original:
-        parts.append(original)
-    env["PYTHONPATH"] = os.pathsep.join(parts)
-    return env
-
-
-def _find_latest_expert_model(ffsm_env_root: Path, algo: str, env_id: str) -> Path:
-    logs_dir = ffsm_env_root / "rl-zoo3" / "logs" / algo
-    _ensure_exists(logs_dir, "rl-zoo3 日志目录")
+def _find_latest_expert_model(expert_log_root: Path, algo: str, env_id: str) -> Path:
+    logs_dir = expert_log_root / algo
+    _ensure_exists(logs_dir, "expert 日志目录")
 
     candidates = list(logs_dir.glob(f"{env_id}_*/best_model.zip"))
     if not candidates:
@@ -120,17 +113,15 @@ class DatasetOutput:
 
 
 def stage_train_expert(args: argparse.Namespace) -> Optional[Path]:
-    ffsm_env_root = Path(args.ffsm_env_root).expanduser().resolve()
-    rlzoo_dir = ffsm_env_root / "rl-zoo3"
-    _ensure_exists(ffsm_env_root, "FFSM_Env 根目录")
-    _ensure_exists(rlzoo_dir, "rl-zoo3 目录")
+    expert_log_root = Path(args.expert_log_root).expanduser().resolve()
+    expert_log_root.mkdir(parents=True, exist_ok=True)
 
     conf_file = (
         Path(args.conf_file).expanduser().resolve()
         if args.conf_file
-        else (rlzoo_dir / f"ffsm_{args.algo}_hyperparams.yml")
+        else (DEFAULT_EXPERT_CONF_DIR / f"ffsm_{args.algo}_hyperparams.yml")
     )
-    _ensure_exists(conf_file, "rl-zoo3 超参数文件")
+    _ensure_exists(conf_file, "expert 超参数文件")
 
     cmd = [
         sys.executable,
@@ -149,19 +140,22 @@ def stage_train_expert(args: argparse.Namespace) -> Optional[Path]:
         "subproc",
         "--conf-file",
         str(conf_file),
+        "--log-folder",
+        str(expert_log_root),
+        "--gym-packages",
+        "ffsm_env",
     ]
     if args.seed is not None:
         cmd.extend(["--seed", str(args.seed)])
     if args.n_timesteps is not None:
         cmd.extend(["-n", str(args.n_timesteps)])
 
-    env = _merge_pythonpath(ffsm_env_root)
-    _run_cmd(cmd, cwd=rlzoo_dir, extra_env=env, dry_run=args.dry_run)
+    _run_cmd(cmd, cwd=REPO_ROOT, extra_env=_reinflow_env(), dry_run=args.dry_run)
 
     if args.dry_run:
         return None
 
-    latest = _find_latest_expert_model(ffsm_env_root, args.algo, args.env_id)
+    latest = _find_latest_expert_model(expert_log_root, args.algo, args.env_id)
     print(f"[INFO] 最新 expert model: {latest}")
     return latest
 
@@ -180,26 +174,23 @@ def _load_sb3_model(algo: str, model_path: Path, device: str):
 
 
 def stage_export_dataset(args: argparse.Namespace) -> DatasetOutput:
-    ffsm_env_root = Path(args.ffsm_env_root).expanduser().resolve()
+    expert_log_root = Path(args.expert_log_root).expanduser().resolve()
     ffsm_pkg_root = (
         Path(args.ffsm_package_root).expanduser().resolve()
         if args.ffsm_package_root
-        else ffsm_env_root
+        else None
     )
-
-    _ensure_exists(ffsm_env_root, "FFSM_Env 根目录")
-    _ensure_exists(ffsm_pkg_root, "ffsm_env 包路径")
 
     if args.expert_model:
         expert_model = Path(args.expert_model).expanduser().resolve()
     else:
         if args.dry_run:
             try:
-                expert_model = _find_latest_expert_model(ffsm_env_root, args.algo, args.env_id)
+                expert_model = _find_latest_expert_model(expert_log_root, args.algo, args.env_id)
             except FileNotFoundError:
                 expert_model = Path("<AUTO_LATEST_EXPERT_MODEL>")
         else:
-            expert_model = _find_latest_expert_model(ffsm_env_root, args.algo, args.env_id)
+            expert_model = _find_latest_expert_model(expert_log_root, args.algo, args.env_id)
     if not args.dry_run:
         _ensure_exists(expert_model, "expert model")
 
@@ -223,14 +214,15 @@ def stage_export_dataset(args: argparse.Namespace) -> DatasetOutput:
             normalization_path=normalization_path,
         )
 
-    if str(ffsm_pkg_root) not in sys.path:
+    if ffsm_pkg_root is not None and str(ffsm_pkg_root) not in sys.path:
         sys.path.insert(0, str(ffsm_pkg_root))
 
     try:
         import ffsm_env  # noqa: F401
     except Exception as exc:
         raise RuntimeError(
-            f"无法导入 ffsm_env，请先安装 FFSM_Env 或检查路径: {ffsm_pkg_root}"
+            "无法导入 ffsm_env。请在当前 conda 环境先安装 FFSM_Env 包，"
+            "或通过 --ffsm-package-root 指定包源码路径。"
         ) from exc
 
     import gymnasium as gym
@@ -428,9 +420,13 @@ def _build_parser() -> argparse.ArgumentParser:
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     def add_shared_arguments(p: argparse.ArgumentParser) -> None:
-        p.add_argument("--ffsm-env-root", default=str(DEFAULT_FFSM_ENV_ROOT), help="FFSM_Env 仓库根目录")
         p.add_argument("--env-id", default="FFSMEnv6dof-v0", help="Gym 环境 ID")
         p.add_argument("--algo", default="sac", choices=["sac", "ppo"], help="expert 算法")
+        p.add_argument(
+            "--expert-log-root",
+            default=str(DEFAULT_EXPERT_LOG_ROOT),
+            help="expert 训练日志根目录（默认在 ReinFlow/log 下）",
+        )
         p.add_argument("--seed", type=int, default=42)
         p.add_argument("--dry-run", action="store_true", help="仅打印命令，不实际执行")
 
@@ -443,7 +439,7 @@ def _build_parser() -> argparse.ArgumentParser:
     p_export = subparsers.add_parser("export-dataset", help="从 expert 模型导出 FFSM 数据集")
     add_shared_arguments(p_export)
     p_export.add_argument("--expert-model", default=None, help="expert model.zip 路径，不传则自动找最新")
-    p_export.add_argument("--ffsm-package-root", default=None, help="ffsm_env 包路径，不传则等于 --ffsm-env-root")
+    p_export.add_argument("--ffsm-package-root", default=None, help="可选：ffsm_env 源码路径（默认直接使用已安装包）")
     p_export.add_argument("--expert-device", default="cpu", help="expert 推理设备")
     p_export.add_argument("--num-trajectories", type=int, default=20)
     p_export.add_argument("--max-steps", type=int, default=200)
