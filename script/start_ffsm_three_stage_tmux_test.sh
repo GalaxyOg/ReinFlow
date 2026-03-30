@@ -42,6 +42,8 @@ FINETUNE_STEPS="${FINETUNE_STEPS:-64}"
 FINETUNE_N_ENVS="${FINETUNE_N_ENVS:-4}"
 FINETUNE_BATCH_SIZE="${FINETUNE_BATCH_SIZE:-1024}"
 FINETUNE_UPDATE_EPOCHS="${FINETUNE_UPDATE_EPOCHS:-2}"
+FINETUNE_LOGPROB_BATCH_SIZE="${FINETUNE_LOGPROB_BATCH_SIZE:-10000}"
+FINETUNE_LOGPROB_BATCH_STRICT="${FINETUNE_LOGPROB_BATCH_STRICT:-0}"
 
 # tmux session 名称
 SESSION_EXPERT="${SESSION_EXPERT:-ffsm_expert_test}"
@@ -75,6 +77,19 @@ function require_dir() {
   local d="$1"
   [[ -d "${d}" ]] || {
     echo "[ERROR] 目录不存在: ${d}" >&2
+    exit 1
+  }
+}
+
+function require_positive_int() {
+  local name="$1"
+  local value="$2"
+  [[ "${value}" =~ ^[0-9]+$ ]] || {
+    echo "[ERROR] ${name} 必须是正整数，当前值: ${value}" >&2
+    exit 1
+  }
+  (( value > 0 )) || {
+    echo "[ERROR] ${name} 必须 > 0，当前值: ${value}" >&2
     exit 1
   }
 }
@@ -257,6 +272,20 @@ function main() {
   fi
   require_file "${base_policy_path}"
 
+  require_positive_int "FINETUNE_N_ENVS" "${FINETUNE_N_ENVS}"
+  require_positive_int "FINETUNE_LOGPROB_BATCH_SIZE" "${FINETUNE_LOGPROB_BATCH_SIZE}"
+
+  local finetune_logprob_batch_size_effective="${FINETUNE_LOGPROB_BATCH_SIZE}"
+  if (( finetune_logprob_batch_size_effective % FINETUNE_N_ENVS != 0 )); then
+    if [[ "${FINETUNE_LOGPROB_BATCH_STRICT}" == "1" ]]; then
+      echo "[ERROR] FINETUNE_LOGPROB_BATCH_SIZE(${FINETUNE_LOGPROB_BATCH_SIZE}) 不能被 FINETUNE_N_ENVS(${FINETUNE_N_ENVS}) 整除" >&2
+      echo "[ERROR] 请手动设置可整除的 FINETUNE_LOGPROB_BATCH_SIZE，或将 FINETUNE_LOGPROB_BATCH_STRICT=0 允许自动对齐" >&2
+      exit 1
+    fi
+    finetune_logprob_batch_size_effective="$(( (finetune_logprob_batch_size_effective / FINETUNE_N_ENVS + 1) * FINETUNE_N_ENVS ))"
+    echo "[WARN] 自动对齐 train.logprob_batch_size: ${FINETUNE_LOGPROB_BATCH_SIZE} -> ${finetune_logprob_batch_size_effective} (n_envs=${FINETUNE_N_ENVS})"
+  fi
+
   validate_cuda_slot "expert" "${CUDA_EXPERT}"
   validate_cuda_slot "pretrain" "${CUDA_PRETRAIN}"
   validate_cuda_slot "finetune" "${CUDA_FINETUNE}"
@@ -277,6 +306,8 @@ function main() {
   echo "[INFO] EXPERT_TIMESTEPS=${EXPERT_TIMESTEPS}"
   echo "[INFO] PRETRAIN_EPOCHS=${PRETRAIN_EPOCHS}"
   echo "[INFO] FINETUNE_ITR=${FINETUNE_ITR}"
+  echo "[INFO] FINETUNE_N_ENVS=${FINETUNE_N_ENVS}"
+  echo "[INFO] FINETUNE_LOGPROB_BATCH_SIZE=${finetune_logprob_batch_size_effective}"
   if [[ -n "${expert_model_path}" ]]; then
     echo "[INFO] Latest existing expert model=${expert_model_path}"
   fi
@@ -338,6 +369,7 @@ ${run_prefix}python script/run.py \\
   wandb.offline_mode=True \\
   env.save_video=False \\
   env.n_envs=${FINETUNE_N_ENVS} \\
+  train.logprob_batch_size=${finetune_logprob_batch_size_effective} \\
   train.n_train_itr=${FINETUNE_ITR} \\
   train.n_steps=${FINETUNE_STEPS} \\
   train.batch_size=${FINETUNE_BATCH_SIZE} \\
