@@ -1,0 +1,22 @@
+name: rlzoo3
+channels:
+  - pytorch
+  - nvidia
+  - conda-forge
+dependencies:
+  - python=3.11
+  - pip
+  - pytorch=2.6.*
+  - pytorch-cuda=12.4
+  - ffmpeg
+  - pip:
+      - gymnasium==1.0.0
+      - stable-baselines3>=2.5.0,<2.9
+      - sb3-contrib>=2.5.0,<2.9
+      - rl_zoo3>=2.5.0,<2.9
+      - hydra-core==1.3.2
+      - omegaconf==2.3.0
+      - wandb==0.17.7
+      - tensorboard
+      - matplotlib==3.7.5
+      - tqdm==4.66.5

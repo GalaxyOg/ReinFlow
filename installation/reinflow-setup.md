@@ -2,6 +2,10 @@
 
 This document records all the steps needed to install packages related to reproducing the results in `ReinFlow: Fine-tuning Flow Matching Policy with Online Reinforcement Learning`. 
 
+For FFSM-only minimal reproduction (no robomimic/kitchen dependencies), use:
+- [ffsm_minimal_setup.md](ffsm_minimal_setup.md)
+- [environment_ffsm_minimal.yml](environment_ffsm_minimal.yml)
+
 
 ### 1. Configure pip source, conda source channels, and create environment
 * Pip and conda sources
