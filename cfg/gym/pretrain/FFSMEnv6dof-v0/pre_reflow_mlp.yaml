@@ -34,6 +34,9 @@ train:
   batch_size: ${batch_size}
   learning_rate: 1e-3
   weight_decay: 1e-6
+  eval_save_video: True
+  video_eval_freq: 5
+  video_eval_num: 1
   lr_scheduler:
     first_cycle_steps: ${train.n_epochs} # 1000
     warmup_steps: 1

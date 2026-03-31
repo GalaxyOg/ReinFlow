@@ -185,6 +185,9 @@ class PreTrainAgent:
         # Testing in mujoco 
         self.test_in_mujoco = cfg.get('test_in_mujoco', False) # in openai gym envs, we test the training performance in mujoco to save the model with the highest reward
         self.test_freq = cfg.train.get('test_freq', self.n_epochs -1)
+        self.video_eval_freq = int(cfg.train.get("video_eval_freq", 0))
+        self.video_eval_num = int(cfg.train.get("video_eval_num", 1))
+        self.test_call_count = 0
         log.info(f"test_in_mujoco=={self.test_in_mujoco}")
         self.render_dir = os.path.join(self.logdir, "render")
         self.result_path = os.path.join(self.logdir, "result.npz")
@@ -257,7 +260,7 @@ class PreTrainAgent:
                 name=cfg.env,
                 max_episode_steps=env_max_episode_steps,
                 reset_at_iteration=False,
-                save_video=True,                               # Change to True if needed
+                save_video=cfg.train.get("eval_save_video", True),
                 use_image_obs = use_image_obs,
                 best_reward_threshold_for_success=best_reward_threshold_for_success,
                 wrappers=wrappers,
@@ -345,9 +348,34 @@ class PreTrainAgent:
         '''for evaluation in sim'''
         raise NotImplementedError
     
+    def _next_test_should_save_video(self) -> bool:
+        if not self.test_in_mujoco:
+            return False
+        self.test_call_count += 1
+        if self.video_eval_freq <= 0:
+            return False
+        return (self.test_call_count % self.video_eval_freq) == 0
+
+    def _save_eval_video_fallback(self) -> None:
+        """Fallback video export when env wrapper does not write eval_trial-*.mp4."""
+        model_state = deepcopy(self.model.state_dict())
+        ema_state = deepcopy(self.ema_model.state_dict())
+        model_was_training = self.model.training
+        old_eval_num = getattr(self, "eval_num", 1)
+        try:
+            self.eval_num = max(1, int(self.video_eval_num))
+            self.eval(num_episodes=self.eval_num, load_checkpoint=False)
+        except Exception as exc:
+            log.warning(f"Fallback eval video export failed: {exc}")
+        finally:
+            self.eval_num = old_eval_num
+            self.model.load_state_dict(model_state)
+            self.ema_model.load_state_dict(ema_state)
+            self.model.train(model_was_training)
+
     def run(self):
         print(f"dataloader_train={len(self.dataloader_train)}")
-        self.test() # see the initialization or resumed performance.
+        self.test(force_save_video=self._next_test_should_save_video()) # see the initialization or resumed performance.
         if self.only_test:
             exit()
         
@@ -441,7 +469,7 @@ class PreTrainAgent:
             # test in mujoco simulator
             # 在MuJoCo模拟器中测试模型性能
             if self.test_in_mujoco and self.epoch % self.test_freq == 0:
-                self.test()
+                self.test(force_save_video=self._next_test_should_save_video())
             
             # log testing info
             # 记录训练日志信息
@@ -639,7 +667,7 @@ class PreTrainAgent:
             logging.info(f"<-- Reset environment {env_ind} with task {task}")
         return obs
     
-    def test(self):
+    def test(self, force_save_video=None):
         if not self.test_in_mujoco:
             return
         log.info(f"Evaluating {self.model.__class__.__name__} in environment {self.env_name} with denoising steps = {self.test_denoising_steps}")
@@ -648,7 +676,8 @@ class PreTrainAgent:
         timer = Timer()
         # Prepare video paths for each envs --- only applies for the first set of episodes if allowing reset within iteration and each iteration has multiple episodes from one env
         options_venv = [{} for _ in range(self.n_envs)]
-        if self.render_video:
+        render_video_now = self.render_video if force_save_video is None else bool(force_save_video)
+        if render_video_now:
             for env_ind in range(self.n_render):
                 options_venv[env_ind]["video_path"] = os.path.join(
                     self.render_dir, f"eval_trial-{env_ind}.mp4"
@@ -862,47 +891,63 @@ class PreTrainAgent:
                 time=time,
             )
 
-    def eval(self):
+        # Some env wrappers may ignore `video_path`; fallback to single-env GIF export.
+        if render_video_now:
+            expected = [
+                os.path.join(self.render_dir, f"eval_trial-{env_ind}.mp4")
+                for env_ind in range(self.n_render)
+            ]
+            if not any(os.path.exists(p) and os.path.getsize(p) > 0 for p in expected):
+                log.warning(
+                    "No eval_trial-*.mp4 found in %s. Triggering fallback video export.",
+                    self.render_dir,
+                )
+                self._save_eval_video_fallback()
+
+    def eval(self, num_episodes=None, load_checkpoint=True):
         "加载模型,评估并输出gif图,固定使用1个环境进行评估"
         log.info(f"Evaluating {self.model.__class__.__name__} in environment {self.env_name} with denoising steps = {self.test_denoising_steps}")
         log_all= self.test_log_all
 
         # choose checkpoint to load (prefer EMA then best then last)
         ckpt = None
-        candidates = []
-        if self.resume_path:
-            candidates.append(self.resume_path)
-        if self.checkpoint_dir:
-            candidates += [
-                os.path.join(self.checkpoint_dir, 'best_ema.pt'),
-                os.path.join(self.checkpoint_dir, 'best.pt'),
-                os.path.join(self.checkpoint_dir, 'last.pt'),
-            ]
+        if load_checkpoint:
+            candidates = []
+            if self.resume_path:
+                candidates.append(self.resume_path)
+            if self.checkpoint_dir:
+                candidates += [
+                    os.path.join(self.checkpoint_dir, 'best_ema.pt'),
+                    os.path.join(self.checkpoint_dir, 'best.pt'),
+                    os.path.join(self.checkpoint_dir, 'last.pt'),
+                ]
 
-        for c in candidates:
-            if c and os.path.exists(c):
-                ckpt = c
-                break
+            for c in candidates:
+                if c and os.path.exists(c):
+                    ckpt = c
+                    break
 
-        if ckpt is None:
-            log.warning('No checkpoint found for eval; using current in-memory model')
+            if ckpt is None:
+                log.warning('No checkpoint found for eval; using current in-memory model')
+            else:
+                try:
+                    data = torch.load(ckpt, map_location=self.device)
+                    # pick ema or model according to test_model_type
+                    if self.test_model_type == 'ema' and 'ema' in data:
+                        self.model.load_state_dict(data['ema'])
+                    elif 'model' in data:
+                        self.model.load_state_dict(data['model'])
+                    else:
+                        # fallback: try load whole dict
+                        try:
+                            self.model.load_state_dict(data)
+                        except Exception:
+                            log.warning('Could not load checkpoint into model')
+                    log.info(f'Loaded checkpoint {ckpt} for evaluation')
+                except Exception as e:
+                    log.warning(f'Failed to load checkpoint {ckpt}: {e}')
         else:
-            try:
-                data = torch.load(ckpt, map_location=self.device)
-                # pick ema or model according to test_model_type
-                if self.test_model_type == 'ema' and 'ema' in data:
-                    self.model.load_state_dict(data['ema'])
-                elif 'model' in data:
-                    self.model.load_state_dict(data['model'])
-                else:
-                    # fallback: try load whole dict
-                    try:
-                        self.model.load_state_dict(data)
-                    except Exception:
-                        log.warning('Could not load checkpoint into model')
-                log.info(f'Loaded checkpoint {ckpt} for evaluation')
-            except Exception as e:
-                log.warning(f'Failed to load checkpoint {ckpt}: {e}')
+            log.info("Running eval with current in-memory model (skip checkpoint reload)")
 
         self.model.eval()
 
@@ -916,7 +961,7 @@ class PreTrainAgent:
         os.makedirs(base_dir, exist_ok=True)
 
         # number of episodes to run (single env)
-        num_episodes = getattr(self, 'eval_num', 1)
+        num_episodes = int(num_episodes) if num_episodes is not None else getattr(self, 'eval_num', 1)
 
         metrics_num_colli = []
         metrics_cum_reward = []
